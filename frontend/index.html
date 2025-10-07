@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AIdea Board - Final Corrected</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <style>
+        :root { --c-magic: #5E29CC; --c-lavender: #f492f0; --c-dark: #12121c; --c-light-glass: rgba(255, 255, 255, 0.05); }
+        body { font-family: 'Inter', sans-serif; background: var(--c-dark); color: white; overflow: hidden; }
+        .glass { background: rgba(26, 26, 46, 0.5); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid var(--c-light-glass); }
+        .column-drag-over { background: rgba(94, 41, 204, 0.3); }
+        .card-ghost { opacity: 0.6; transform: rotate(2deg); }
+        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const InfoPanelImage = ({ src, alt, text }) => (
+            <div className="flex flex-col items-center justify-center text-center h-full p-4">
+                <img src={src} alt={alt} className="w-40 h-40 object-contain mb-4" />
+                <p className="text-sm text-gray-400 max-w-xs">{text}</p>
+            </div>
+        );
+
+        const BrainstormBoard = () => {
+            const [boardData, setBoardData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [sidePanelContent, setSidePanelContent] = useState({ type: 'welcome', data: null });
+            const [aiLoading, setAiLoading] = useState(false);
+            const [visualizingCard, setVisualizingCard] = useState(null);
+            const API_BASE_URL = "http://127.0.0.1:5000/api";
+
+            // *** UPDATED with Timeout Logic ***
+            useEffect(() => {
+                // Set a 10-second timeout
+                const timeout = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Request timed out. Please check your connection.')), 10000)
+                );
+
+                // Race the fetch request against the timeout
+                Promise.race([
+                    fetch(`${API_BASE_URL}/board`),
+                    timeout
+                ])
+                .then(res => res.json())
+                .then(data => {
+                    setBoardData(data);
+                    setLoading(false);
+                })
+                .catch(err => {
+                    setError(err.message || "Can't connect to backend. The server might be down.");
+                    setLoading(false); // Stop loading on error
+                });
+            }, []);
+
+            const saveBoard = (newBoardData) => {
+                fetch(`${API_BASE_URL}/board`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newBoardData) });
+            };
+
+            const addCard = (columnId, content) => {
+                if (!content.trim()) return;
+                const newCardId = `card-${Date.now()}`;
+                const newCard = { id: newCardId, content };
+                const newState = { ...boardData, cards: { ...boardData.cards, [newCardId]: newCard }, columns: { ...boardData.columns, [columnId]: { ...boardData.columns[columnId], cardIds: [newCardId, ...boardData.columns[columnId].cardIds] }}};
+                setBoardData(newState); saveBoard(newState); getSuggestions(content);
+            };
+
+            const updateCard = (cardId, newContent) => {
+                const newState = { ...boardData, cards: { ...boardData.cards, [cardId]: { ...boardData.cards[cardId], content: newContent } } };
+                setBoardData(newState); saveBoard(newState);
+            };
+
+            const deleteCard = (cardId, columnId) => {
+                const newCards = { ...boardData.cards }; delete newCards[cardId];
+                const newCardIds = boardData.columns[columnId].cardIds.filter(id => id !== cardId);
+                const newState = { ...boardData, cards: newCards, columns: { ...boardData.columns, [columnId]: { ...boardData.columns[columnId], cardIds: newCardIds } } };
+                setBoardData(newState); saveBoard(newState);
+            };
+
+            const dragHandlers = {
+                onDragStart: (e, cardId, columnId) => { e.dataTransfer.setData("cardId", cardId); e.dataTransfer.setData("sourceColumnId", columnId); setTimeout(() => e.target.classList.add('card-ghost'), 0); },
+                onDragEnd: (e) => { e.target.classList.remove('card-ghost'); },
+                onDragOver: (e) => { e.preventDefault(); e.currentTarget.classList.add('column-drag-over'); },
+                onDragLeave: (e) => { e.currentTarget.classList.remove('column-drag-over'); },
+                onDrop: (e, targetColumnId) => {
+                    e.preventDefault(); e.currentTarget.classList.remove('column-drag-over');
+                    const cardId = e.dataTransfer.getData("cardId"); const sourceColumnId = e.dataTransfer.getData("sourceColumnId");
+                    if (!cardId || sourceColumnId === targetColumnId) return;
+                    const sourceCol = boardData.columns[sourceColumnId]; const targetCol = boardData.columns[targetColumnId];
+                    const sourceCardIds = [...sourceCol.cardIds]; const targetCardIds = [...targetCol.cardIds];
+                    const dragIndex = sourceCardIds.indexOf(cardId);
+                    sourceCardIds.splice(dragIndex, 1); targetCardIds.unshift(cardId);
+                    const newState = { ...boardData, columns: { ...boardData.columns, [sourceColumnId]: { ...sourceCol, cardIds: sourceCardIds }, [targetColumnId]: { ...targetCol, cardIds: targetCardIds }}};
+                    setBoardData(newState); saveBoard(newState);
+                }
+            };
+
+            const getSuggestions = (text) => {
+                setAiLoading(true); setSidePanelContent({ type: 'suggestions', data: [] });
+                fetch(`${API_BASE_URL}/ai/suggest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
+                .then(res => { if (!res.ok) return Promise.reject('AI suggestion request failed'); return res.json(); })
+                .then(data => {
+                    if (data.error) { setSidePanelContent({ type: 'error', data: "Sorry, AI failed. Check the key or try again." }); }
+                    else if (data.length === 0) { setSidePanelContent({ type: 'idle', data: "The AI is thinking... or maybe taking a break. No suggestions for now!" }); }
+                    else { setSidePanelContent({ type: "suggestions", data }); }
+                    setAiLoading(false);
+                })
+                .catch(err => { setSidePanelContent({ type: 'error', data: "Sorry, AI failed. Check connection or API key." }); setAiLoading(false); });
+            };
+
+            const handleSummarize = () => {
+                setAiLoading(true); setSidePanelContent({ type: "summary", data: "Generating summary..." });
+                const allCardsContent = Object.values(boardData.cards).map(card => card.content);
+                fetch(`${API_BASE_URL}/ai/summarize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cards: allCardsContent }) })
+                .then(res => res.json()).then(data => {
+                    if(data.error) {
+                        setSidePanelContent({ type: "error", data: data.error });
+                    } else {
+                        setSidePanelContent({ type: "summary", data: data.summary });
+                    }
+                    setAiLoading(false);
+                })
+                .catch(err => { setSidePanelContent({ type: "error", data: "Failed to get summary." }); setAiLoading(false); });
+            };
+
+            const handleCluster = () => {
+                setAiLoading(true); setSidePanelContent({ type: "info", data: "Clustering ideas..." });
+                const cardContents = Object.fromEntries(Object.entries(boardData.cards).map(([id, card]) => [id, card.content]));
+                fetch(`${API_BASE_URL}/ai/cluster`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cards: cardContents }) })
+                .then(res => res.json()).then(data => {
+                    if (data.clusters) {
+                        const newCards = { ...boardData.cards };
+                        for (const cardId in data.clusters) {
+                            if(newCards[cardId]) {
+                                newCards[cardId].clusterId = data.clusters[cardId];
+                            }
+                        }
+                        const newState = { ...boardData, cards: newCards };
+                        setBoardData(newState);
+                        saveBoard(newState);
+                        setSidePanelContent({ type: "success", data: "Clustering complete!" });
+                    } else {
+                        setSidePanelContent({ type: "error", data: data.error || "Clustering failed." });
+                    }
+                    setAiLoading(false);
+                }).catch(err => { setSidePanelContent({ type: "error", data: "Clustering failed." }); setAiLoading(false); });
+            };
+
+            const handleVisualize = (cardId, text) => {
+                setVisualizingCard(cardId);
+                const currentContent = boardData.cards[cardId].content.split('\n![Visualization]')[0];
+                fetch(`${API_BASE_URL}/ai/visualize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: currentContent }) })
+                .then(res => res.json()).then(data => {
+                    if (data.imageData) {
+                        updateCard(cardId, currentContent + `\n![Visualization](${data.imageData})`);
+                    } else {
+                        setSidePanelContent({type: 'error', data: data.error || "Image generation failed."});
+                    }
+                    setVisualizingCard(null);
+                }).catch(err => {
+                    setSidePanelContent({type: 'error', data: "Failed to generate visualization."});
+                    setVisualizingCard(null);
+                });
+            };
+
+            if (loading) return (
+                <div className="flex h-screen w-screen items-center justify-center">
+                    <InfoPanelImage src="./images/Loading-Time.png" alt="Loading" text="Brewing some magic, please wait..." />
+                </div>
+            );
+
+            if (error) return <div className="flex h-screen w-screen items-center justify-center text-red-400 p-8 text-center">{error}</div>;
+
+            return (
+                <div className="h-screen w-screen bg-dark p-8 flex flex-col gap-6">
+                    <Header handleSummarize={handleSummarize} handleCluster={handleCluster}/>
+                    <main className="grid grid-cols-[1fr_360px] gap-8 flex-1 overflow-hidden">
+                        <div className="flex gap-6 overflow-hidden">
+                           {boardData && boardData.columnOrder.map(columnId => (
+                                <Column
+                                    key={columnId}
+                                    column={boardData.columns[columnId]}
+                                    cards={boardData.columns[columnId].cardIds.map(id => boardData.cards[id])}
+                                    addCard={addCard}
+                                    updateCard={updateCard}
+                                    deleteCard={deleteCard}
+                                    handleVisualize={handleVisualize}
+                                    visualizingCard={visualizingCard}
+                                    dragHandlers={dragHandlers}
+                                />
+                           ))}
+                        </div>
+                        <SidePanel content={sidePanelContent} addCard={(content) => addCard('col-1', content)} loading={aiLoading} />
+                    </main>
+                </div>
+            );
+        };
+
+        const Header = ({ handleSummarize, handleCluster }) => (
+             <header className="flex items-center justify-between p-4 glass rounded-xl flex-shrink-0">
+                <h1 className="text-xl font-bold flex items-center gap-3"><i className="fa-solid fa-wand-magic-sparkles text-lavender"></i>AIdea Board</h1>
+                <div className="flex items-center space-x-2">
+                    <button onClick={handleSummarize} className="flex items-center gap-2 px-3 py-2 rounded-lg text-white text-sm bg-white/5 transition-colors hover:bg-white/10"><i className="fa-solid fa-book-sparkles text-lavender"></i><span>Summarize</span></button>
+                    <button onClick={handleCluster} className="flex items-center gap-2 px-3 py-2 rounded-lg text-white text-sm bg-white/5 transition-colors hover:bg-white/10"><i className="fa-solid fa-shapes text-lavender"></i><span>Cluster</span></button>
+                </div>
+            </header>
+        );
+
+        const Column = ({ column, cards, addCard, ...props }) => (
+            <div
+                className="flex-1 flex flex-col min-w-0 glass rounded-xl"
+                onDrop={(e) => props.dragHandlers.onDrop(e, column.id)}
+                onDragOver={props.dragHandlers.onDragOver}
+                onDragLeave={props.dragHandlers.onDragLeave}
+            >
+                <h2 className="p-4 font-bold text-white border-b border-white/10 flex-shrink-0">{column.title}</h2>
+                <div className="p-2 overflow-y-auto flex-1">
+                    {cards.map((card) => card && <Card key={card.id} card={card} columnId={column.id} {...props} />)}
+                </div>
+                <NewCardInput columnId={column.id} addCard={addCard} />
+            </div>
+        );
+
+        const NewCardInput = ({ columnId, addCard }) => {
+            const [content, setContent] = useState('');
+            const handleAdd = () => { addCard(columnId, content); setContent(''); };
+            return (
+                <div className="p-2 m-2 border-t border-white/10">
+                    <textarea
+                        value={content}
+                        onChange={(e) => setContent(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey ? (e.preventDefault(), handleAdd()) : null}
+                        placeholder="Add a new idea..."
+                        className="w-full bg-transparent p-2 rounded-md focus:outline-none focus:bg-white/5 text-white placeholder-gray-500 resize-none"
+                        rows="2"
+                    />
+                    <button onClick={handleAdd} className="w-full mt-2 bg-magic text-white font-semibold hover:bg-opacity-90 transition-all px-4 py-2 text-sm rounded-lg active:scale-95">Add Card</button>
+                </div>
+            );
+        };
+
+        const Card = ({ card, columnId, updateCard, deleteCard, handleVisualize, visualizingCard, dragHandlers }) => {
+            const [isEditing, setIsEditing] = useState(false);
+            const [content, setContent] = useState(card.content);
+            const handleUpdate = () => { updateCard(card.id, content); setIsEditing(false); };
+
+            const clusterColors = ['border-transparent', 'border-pink-500', 'border-blue-500', 'border-green-500', 'border-yellow-500'];
+            const clusterClass = card.clusterId != null ? clusterColors[card.clusterId % clusterColors.length] : clusterColors[0];
+
+            const renderContent = () => {
+                const parts = card.content.split(/(!\[.*?\]\(.*?\))/g);
+                return parts.map((part, index) => {
+                    const match = part.match(/!\[(.*?)\]\((.*?)\)/);
+                    if (match) return <img key={index} src={match[2]} alt={match[1]} className="my-2 rounded-lg object-cover w-full h-40" />;
+                    if (part) return <p key={index} className="whitespace-pre-wrap text-gray-300 text-sm">{part.trim()}</p>;
+                    return null;
+                });
+            };
+
+            return (
+                <div
+                    className={`bg-white/5 p-3 m-2 rounded-lg cursor-grab transition-all hover:bg-white/10 border-l-4 ${clusterClass}`}
+                    draggable
+                    onDragStart={(e) => dragHandlers.onDragStart(e, card.id, columnId)}
+                    onDragEnd={dragHandlers.onDragEnd}
+                >
+                    {isEditing ? (
+                        <div>
+                            <textarea
+                                value={content}
+                                onChange={e => setContent(e.target.value)}
+                                className="w-full bg-white/10 p-2 rounded-md focus:outline-none text-white placeholder-gray-500 resize-y"
+                                rows="4"
+                            />
+                            <div className="flex items-center gap-2 mt-2">
+                                <button onClick={handleUpdate} className="bg-green-500 text-white px-3 py-1 rounded text-xs font-semibold">Save</button>
+                                <button onClick={() => setIsEditing(false)} className="text-gray-400 text-xs hover:text-white">Cancel</button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div>
+                            <div className="flex flex-col gap-2">{renderContent()}</div>
+                            <div className="flex items-center gap-4 text-gray-500 text-xs mt-3 pt-2 border-t border-white/10">
+                                <button onClick={() => setIsEditing(true)} className="hover:text-lavender transition-colors"><i className="fa-solid fa-pencil"></i></button>
+                                <button onClick={() => deleteCard(card.id, columnId)} className="hover:text-red-400 transition-colors"><i className="fa-solid fa-trash"></i></button>
+                                <button onClick={() => handleVisualize(card.id, card.content)} className="hover:text-lavender transition-colors disabled:opacity-50" disabled={visualizingCard === card.id}>
+                                    {visualizingCard === card.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-image"></i>}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const SidePanel = ({ content, addCard, loading }) => (
+             <div className="glass flex flex-col rounded-2xl overflow-hidden">
+                <h3 className="font-bold text-xl p-6 flex items-center gap-3 text-white border-b border-white/10 flex-shrink-0"><i className="fa-solid fa-robot text-lavender"></i> AI Assistant</h3>
+                <div className="flex-1 overflow-y-auto p-2">
+                    {loading ? <div className="flex items-center justify-center h-full"><i className="fa-solid fa-spinner fa-spin fa-2x text-gray-400"></i></div>
+                    : <div>
+                        {content.type === 'welcome' && <InfoPanelImage src="./images/Summer-Collection n.3.png" alt="Welcome" text="Add a card or click an action to see AI magic happen here!" />}
+                        {content.type === 'suggestions' && Array.isArray(content.data) && content.data.length > 0 && content.data.map((s, i) => (
+                            <div key={i} className="bg-white/5 p-3 m-2 rounded-lg flex justify-between items-center transition-all hover:bg-white/10">
+                                <p className="text-sm text-gray-300 flex-1 mr-2">{s}</p>
+                                <button onClick={() => addCard(s)} className="bg-lavender text-magic rounded-full h-8 w-8 text-xl leading-none flex items-center justify-center transition-transform hover:scale-110 active:scale-90">+</button>
+                            </div>
+                        ))}
+                        {content.type === 'idle' && <InfoPanelImage src="./images/Chill-Time.png" alt="Idle" text={content.data} />}
+                        {content.type === 'success' && <InfoPanelImage src="./images/Fast-Internet.png" alt="Success" text={content.data} />}
+                        {content.type === 'summary' && <div className="text-sm m-2 whitespace-pre-wrap text-gray-300 bg-white/5 p-4 rounded-lg">{content.data}</div>}
+                        {content.type === 'error' && <div className="bg-red-500/20 m-2 border border-red-500/30 text-red-300 text-sm p-3 rounded-lg">{content.data}</div>}
+                        {content.type === 'info' && <p className="text-sm text-center text-gray-400 p-4">{content.data}</p>}
+                    </div>}
+                </div>
+            </div>
+        );
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<BrainstormBoard />);
+    </script>
+</body>
+</html>

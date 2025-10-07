@@ -1,0 +1,9 @@
+Flask
+Flask-Cors
+python-dotenv
+google-generativeai
+firebase-admin
+requests
+numpy
+scikit-learn
+gunicorn
