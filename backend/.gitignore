@@ -1,0 +1,9 @@
+# Ignore Python virtual environment
+.venv/
+
+# Ignore secret files
+.env
+serviceAccountKey.json
+
+# Ignore pycache files
+__pycache__/
