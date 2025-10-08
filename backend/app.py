@@ -14,7 +14,10 @@ import numpy as np
 # --- Initialization ---
 load_dotenv()
 app = Flask(__name__)
-CORS(app)
+
+# UPDATED: Configure CORS to specifically allow your Netlify frontend URL
+CORS(app, resources={r"/api/*": {"origins": "https://aidea-board.netlify.app"}})
+
 
 # --- Firebase Setup ---
 try:
