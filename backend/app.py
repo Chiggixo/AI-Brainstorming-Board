@@ -15,16 +15,26 @@ import numpy as np
 load_dotenv()
 app = Flask(__name__)
 
-# UPDATED: Configure CORS to specifically allow your Netlify frontend URL
-CORS(app, resources={r"/api/*": {"origins": "https://aidea-board.netlify.app"}})
+# FINAL FIX: Configure CORS to specifically allow your Netlify frontend and local server
+# This is the most important change.
+origins = [
+    "https://ai-brainstorming-board.netlify.app", 
+    "http://127.0.0.1:5000"
+]
+CORS(app, resources={r"/api/*": {"origins": origins}})
 
 
 # --- Firebase Setup ---
 try:
-    SERVICE_ACCOUNT_KEY_PATH = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY_PATH")
-    if not SERVICE_ACCOUNT_KEY_PATH:
-        raise ValueError("FIREBASE_SERVICE_ACCOUNT_KEY_PATH not set in .env")
-    cred = credentials.Certificate(SERVICE_ACCOUNT_KEY_PATH)
+    # On Render, this will be a string. On local, a file path.
+    service_account_info = os.getenv("SERVICE_ACCOUNT_KEY_CONTENTS")
+    if service_account_info:
+        cred = credentials.Certificate(json.loads(service_account_info))
+    else:
+        # Fallback for local development
+        SERVICE_ACCOUNT_KEY_PATH = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY_PATH", "./serviceAccountKey.json")
+        cred = credentials.Certificate(SERVICE_ACCOUNT_KEY_PATH)
+
     if not firebase_admin._apps:
         firebase_admin.initialize_app(cred)
     db = firestore.client()
@@ -33,15 +43,16 @@ except Exception as e:
     print(f"Error initializing Firestore: {e}")
     db = None
 
-# --- Google AI Setup (FINAL STABLE VERSION) ---
+# --- Google AI Setup ---
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 if not GOOGLE_API_KEY:
     raise ValueError("GOOGLE_API_KEY not set in .env")
-# FINAL FIX: Using the v1beta endpoint with a stable model is the most reliable method.
 AI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GOOGLE_API_KEY}"
-print("Google AI Direct API URL is configured with the final stable endpoint.")
+print("Google AI Direct API URL is configured.")
 
 DEMO_USER_ID = "user123"
+
+# --- The rest of your app.py file remains the same ---
 
 def get_board_ref(user_id):
     return db.collection('boards').document(user_id)
@@ -57,7 +68,6 @@ def get_initial_board_data():
         }, "columnOrder": ["col-1", "col-2", "col-3"],
     }
 
-# --- API ROUTES ---
 @app.route('/api/board', methods=['GET'])
 def get_board():
     if not db: return jsonify({"error": "Database not initialized"}), 500
@@ -82,14 +92,12 @@ def update_board():
         print(f"Error updating board: {e}")
         return jsonify({"error": "Could not update board"}), 500
 
-# --- AI ROUTES (REWRITTEN FOR STABILITY) ---
 def call_generative_ai(prompt):
-    """A single, stable function to call the AI via direct HTTP request with better error logging."""
     headers = {"Content-Type": "application/json"}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
         response = requests.post(AI_API_URL, headers=headers, json=payload)
-        response.raise_for_status() # Raises an HTTPError for bad responses (4xx or 5xx)
+        response.raise_for_status()
         return response.json()
     except requests.exceptions.HTTPError as http_err:
         print(f"HTTP error occurred: {http_err}")
@@ -98,7 +106,6 @@ def call_generative_ai(prompt):
     except Exception as e:
         print(f"An unexpected error occurred in call_generative_ai: {e}")
         raise e
-
 
 @app.route('/api/ai/suggest', methods=['POST'])
 def get_suggestions():
@@ -117,6 +124,7 @@ def get_suggestions():
 
 @app.route('/api/ai/summarize', methods=['POST'])
 def get_summary():
+    # ... (rest of the function is the same)
     try:
         all_text = ". ".join(request.json.get('cards', []))
         if not all_text:
@@ -128,9 +136,10 @@ def get_summary():
     except Exception as e:
         print(f"AI summary error: {e}")
         return jsonify({"error": "Failed to generate summary"}), 500
-
+    
 @app.route('/api/ai/visualize', methods=['POST'])
 def get_visualization():
+    # ... (rest of the function is the same)
     try:
         placeholder_url = f"https://picsum.photos/600/400?random={uuid.uuid4()}"
         return jsonify({"imageData": placeholder_url})
@@ -140,6 +149,7 @@ def get_visualization():
 
 @app.route('/api/ai/cluster', methods=['POST'])
 def cluster_ideas():
+    # ... (rest of the function is the same)
     try:
         cards = request.json.get('cards', {})
         if len(cards) < 3: return jsonify({"clusters": {}})
