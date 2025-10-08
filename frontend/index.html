@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AIdea Board - Final Corrected</title>
+    <title>AIdea Board - Live</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -39,28 +39,27 @@
             const [sidePanelContent, setSidePanelContent] = useState({ type: 'welcome', data: null });
             const [aiLoading, setAiLoading] = useState(false);
             const [visualizingCard, setVisualizingCard] = useState(null);
-            const API_BASE_URL = "http://127.0.0.1:5000/api";
 
-            // *** UPDATED with Timeout Logic ***
+            // *** FINAL FIX: Pointing to your LIVE backend on Render ***
+            const API_BASE_URL = "https://ai-brainstorming-board.onrender.com/api";
+
             useEffect(() => {
-                // Set a 10-second timeout
                 const timeout = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Request timed out. Please check your connection.')), 10000)
+                    setTimeout(() => reject(new Error('Request timed out. The server might be starting up.')), 15000) // Increased to 15s for free tier servers
                 );
 
-                // Race the fetch request against the timeout
-                Promise.race([
-                    fetch(`${API_BASE_URL}/board`),
-                    timeout
-                ])
-                .then(res => res.json())
+                Promise.race([ fetch(`${API_BASE_URL}/board`), timeout ])
+                .then(res => {
+                    if (!res.ok) throw new Error(`Network response was not ok (${res.status})`);
+                    return res.json();
+                })
                 .then(data => {
                     setBoardData(data);
                     setLoading(false);
                 })
                 .catch(err => {
-                    setError(err.message || "Can't connect to backend. The server might be down.");
-                    setLoading(false); // Stop loading on error
+                    setError(err.message || "Can't connect to backend. Please try again in a moment.");
+                    setLoading(false);
                 });
             }, []);
 
@@ -176,7 +175,7 @@
 
             if (loading) return (
                 <div className="flex h-screen w-screen items-center justify-center">
-                    <InfoPanelImage src="./images/Loading-Time.png" alt="Loading" text="Brewing some magic, please wait..." />
+                    <InfoPanelImage src="./images/Loading-Time.png" alt="Loading" text="Connecting to server, please wait..." />
                 </div>
             );
 
